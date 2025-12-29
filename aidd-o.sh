@@ -65,7 +65,7 @@ while [[ $# -gt 0 ]]; do
             echo "  --spec             Specification file (optional for existing codebases, required for new projects)"
             echo "  --max-iterations   Maximum iterations (optional, unlimited if not specified)"
             echo "  --timeout          Timeout in seconds (optional, default: 600)"
-            echo "  --idle-timeout     Abort if kilocode produces no output for N seconds (optional, default: 180)"
+            echo "  --idle-timeout     Abort if opencode produces no output for N seconds (optional, default: 180)"
             echo "  --model            Model to use (optional)"
             echo "  --init-model       Model to use for initializer/onboarding prompts (optional, overrides --model)"
             echo "  --code-model       Model to use for coding prompt (optional, overrides --model)"
@@ -183,20 +183,26 @@ run_opencode_prompt() {
 # Function to find or create metadata directory
 find_or_create_metadata_dir() {
     local dir="$1"
-    # Check for existing directories in order of preference
+
     if [[ -d "$dir/.aidd" ]]; then
         echo "$dir/.aidd"
         return
     fi
-    if [[ -d "$dir/.autok" ]]; then
-        echo "$dir/.autok"
+
+    # Migrate legacy metadata to .aidd as needed
+    if [[ -d "$dir/.autoo" ]]; then
+        local legacy="$dir/.autoo"
+        local target="$dir/.aidd"
+        mkdir -p "$target"
+        cp -R "$legacy/." "$target/" 2>/dev/null || true
+        echo "$target"
         return
     fi
     if [[ -d "$dir/.automaker" ]]; then
         echo "$dir/.automaker"
         return
     fi
-    # Create .aidd as default
+
     mkdir -p "$dir/.aidd"
     echo "$dir/.aidd"
 }
@@ -367,13 +373,13 @@ if [[ -z "$MAX_ITERATIONS" ]]; then
                     else
                         echo "Detected existing codebase, using onboarding prompt..."
                     fi
-                    # Create .autoo directory if it doesn't exist and copy artifacts
+                    # Ensure .aidd exists (migrating legacy state if necessary) and copy artifacts
                     copy_artifacts "$PROJECT_DIR"
                     # Send onboarding prompt from project directory (don't copy spec)
                     run_opencode_prompt "$PROJECT_DIR" "$SCRIPT_DIR/prompts/onboarding.md" "${INIT_MODEL_ARGS[@]}"
                 else
                     echo "Required files not found, copying spec and sending initializer prompt..."
-                    # Create .autoo directory if it doesn't exist and copy artifacts
+                    # Ensure .aidd exists (migrating legacy state if necessary) and copy artifacts
                     copy_artifacts "$PROJECT_DIR"
                     # Copy spec file to project directory (only if we have one)
                     if [[ -n "$SPEC_FILE" ]]; then

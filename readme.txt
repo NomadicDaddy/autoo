@@ -77,7 +77,7 @@ The script runs in a loop based on max-iterations:
    - For new projects: copies spec file and uses initializer prompt
    - For existing codebases: uses onboarding prompt without copying spec
 5. If both exist:
-   - Sends coding prompt to kilocode
+   - Sends coding prompt to opencode
 
 If an iteration fails repeatedly, the run can stop early when `--quit-on-abort` / `-QuitOnAbort` reaches its threshold.
 

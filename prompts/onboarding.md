@@ -27,8 +27,8 @@ Tool names are exact and case-sensitive; treat `/.aidd/tools.md` as canonical be
         - Special configuration needs
         - Modified initialization steps
 
-2. **Check for Existing .autoo Files:**
-    - Look for existing `/.aidd/feature_list.json`, `/.aidd/progress.md`, or other .autoo files
+2. **Check for Existing .aidd Files (migrate legacy directories if present):**
+    - Look for existing `/.aidd/feature_list.json`, `/.aidd/progress.md`, or other `.aidd` files (copy legacy `/.autoo/*` into `.aidd/*` if needed)
     - If they exist, preserve and merge their content with new findings
     - Document existing state in your initial assessment
 
