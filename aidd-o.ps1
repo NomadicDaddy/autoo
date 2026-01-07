@@ -17,7 +17,7 @@ param(
 	[int]$Timeout = 600,  # Default to 600 seconds
 
 	[Parameter(Mandatory = $false)]
-	[int]$IdleTimeout = 180,
+	[int]$IdleTimeout = 300,  # Default idle output timeout in seconds (increased from 180 to allow for longer AI responses)
 
 	[Parameter(Mandatory = $false)]
 	[string]$Model = '',
@@ -44,7 +44,7 @@ if ($Help) {
 	Write-Host '  -Spec             Specification file (optional for existing codebases, required for new projects)'
 	Write-Host '  -MaxIterations    Maximum iterations (optional, unlimited if not specified)'
 	Write-Host '  -Timeout          Timeout in seconds (optional, default: 600)'
-	Write-Host '  -IdleTimeout      Abort if opencode produces no output for N seconds (optional, default: 180)'
+	Write-Host '  -IdleTimeout      Abort if opencode produces no output for N seconds (optional, default: 300)'
 	Write-Host '  -Model            Model to use (optional)'
 	Write-Host '  -InitModel        Model to use for initializer/onboarding prompts (optional, overrides -Model)'
 	Write-Host '  -CodeModel        Model to use for coding prompt (optional, overrides -Model)'
@@ -75,14 +75,21 @@ function Find-OrCreateMetadataDir {
 		return $aiddDir
 	}
 
-	$aiddDir = Join-Path $Directory '.aidd'
-	if (Test-Path $aiddDir -PathType Container) {
+	# Migrate legacy metadata to .aidd as needed
+	$autooDir = Join-Path $Directory '.autoo'
+	if (Test-Path $autooDir -PathType Container) {
+		Write-Host "Migrating legacy .autoo directory to .aidd..."
+		New-Item -Path $aiddDir -ItemType Directory -Force | Out-Null
+		Copy-Item -Path "$autooDir\*" -Destination $aiddDir -Recurse -ErrorAction SilentlyContinue
 		return $aiddDir
 	}
 
 	$automakerDir = Join-Path $Directory '.automaker'
 	if (Test-Path $automakerDir -PathType Container) {
-		return $automakerDir
+		Write-Host "Migrating legacy .automaker directory to .aidd..."
+		New-Item -Path $aiddDir -ItemType Directory -Force | Out-Null
+		Copy-Item -Path "$automakerDir\*" -Destination $aiddDir -Recurse -ErrorAction SilentlyContinue
+		return $aiddDir
 	}
 
 	# Create .aidd as default
@@ -389,6 +396,16 @@ $NextLogIndex = Get-NextIterationLogIndex -IterationsDir $IterationsDir
 
 $ConsecutiveFailures = 0
 
+# Initialize onboarding state check (persist across iterations)
+$OnboardingComplete = $false
+if (Test-Path $FeatureListCheckPath -PathType Leaf) {
+	# Check if feature_list.json contains actual data (not just template)
+	$content = Get-Content $FeatureListCheckPath -Raw
+	if ($content -notmatch '\{yyyy-mm-dd\}' -and $content -notmatch '\{Short name of the feature\}') {
+		$OnboardingComplete = $true
+	}
+}
+
 # Check for metadata dir/spec.txt
 try {
 	if ($MaxIterations -eq 0) {
@@ -401,41 +418,38 @@ try {
 			Write-Host "Iteration $i"
 			Write-Host "Transcript: $logFile"
 			Write-Host "Started: $(Get-Date -Format o)"
-
+		  
 			try {
 				Start-Transcript -Path $logFile -Force | Out-Null
-
-				# Check if onboarding is already complete
-				$OnboardingComplete = $false
-				if (Test-Path $FeatureListCheckPath -PathType Leaf) {
-					# Check if feature_list.json contains actual data (not just template)
-					$content = Get-Content $FeatureListCheckPath -Raw
-					if ($content -notmatch '\{yyyy-mm-dd\}' -and $content -notmatch '\{Short name of the feature\}') {
-						$OnboardingComplete = $true
-					}
-				}
-
+		  
 				$opencodeExitCode = 0
-				if (-not (Test-Path $SpecCheckPath -PathType Leaf) -or -not (Test-Path $FeatureListCheckPath -PathType Leaf) -or -not $OnboardingComplete) {
-					if ((-not $script:NewProjectCreated) -and (Test-ExistingCodebase -Directory $ProjectDir) -and ((-not (Test-Path "$MetadataDir/spec.txt" -PathType Leaf)) -or (-not (Test-Path "$MetadataDir/feature_list.json" -PathType Leaf)) -or -not $OnboardingComplete)) {
-						if (-not $OnboardingComplete) {
-							Write-Host 'Detected incomplete onboarding, resuming onboarding prompt...'
-						} else {
-							Write-Host 'Detected existing codebase, using onboarding prompt...'
-						}
-						Copy-Artifacts -ProjectDir $ProjectDir
-						$opencodeExitCode = Invoke-OpenCodePrompt -ProjectDir $ProjectDir -PromptPath "$PSScriptRoot/prompts/onboarding.md" -EffectiveModel $effectiveInitModel
-					} else {
-						Write-Host 'Required files not found, copying spec and sending initializer prompt...'
-						Copy-Artifacts -ProjectDir $ProjectDir
-						if ($Spec -ne '') {
-							Copy-Item $Spec $SpecCheckPath
-						}
-						$opencodeExitCode = Invoke-OpenCodePrompt -ProjectDir $ProjectDir -PromptPath "$PSScriptRoot/prompts/initializer.md" -EffectiveModel $effectiveInitModel
-					}
-				} else {
-					Write-Host 'Required files found, sending coding prompt...'
+				# Determine which prompt to send based on project state
+				if ($OnboardingComplete -and (Test-Path $FeatureListCheckPath -PathType Leaf)) {
+					# Onboarding is complete, ready for coding
+					Write-Host 'Onboarding complete, sending coding prompt...'
 					$opencodeExitCode = Invoke-OpenCodePrompt -ProjectDir $ProjectDir -PromptPath "$PSScriptRoot/prompts/coding.md" -EffectiveModel $effectiveCodeModel
+				} elseif ($script:NewProjectCreated -and $Spec -ne '') {
+					# New project with spec file - use initializer
+					Write-Host 'New project detected, copying spec and sending initializer prompt...'
+					Copy-Artifacts -ProjectDir $ProjectDir
+					if ($Spec -ne '') {
+						Copy-Item $Spec $SpecCheckPath
+					}
+					$opencodeExitCode = Invoke-OpenCodePrompt -ProjectDir $ProjectDir -PromptPath "$PSScriptRoot/prompts/initializer.md" -EffectiveModel $effectiveInitModel
+				} elseif (Test-ExistingCodebase -Directory $ProjectDir) {
+					# Existing codebase that needs onboarding
+					if (-not $OnboardingComplete) {
+						Write-Host 'Detected incomplete onboarding, resuming onboarding prompt...'
+					} else {
+						Write-Host 'Detected existing codebase without feature_list, using onboarding prompt...'
+					}
+					Copy-Artifacts -ProjectDir $ProjectDir
+					$opencodeExitCode = Invoke-OpenCodePrompt -ProjectDir $ProjectDir -PromptPath "$PSScriptRoot/prompts/onboarding.md" -EffectiveModel $effectiveInitModel
+				} else {
+					# New project without spec file - use initializer
+					Write-Host 'No spec provided, sending initializer prompt...'
+					Copy-Artifacts -ProjectDir $ProjectDir
+					$opencodeExitCode = Invoke-OpenCodePrompt -ProjectDir $ProjectDir -PromptPath "$PSScriptRoot/prompts/initializer.md" -EffectiveModel $effectiveInitModel
 				}
 
 				if ($opencodeExitCode -ne 0) {
@@ -456,7 +470,7 @@ try {
 			} finally {
 				try { Stop-Transcript | Out-Null } catch { }
 			}
-
+ 
 			$i++
 		}
 	} else {
@@ -464,45 +478,43 @@ try {
 		for ($i = 1; $i -le $MaxIterations; $i++) {
 			$logFile = Join-Path $IterationsDir ('{0}.log' -f $NextLogIndex.ToString('D3'))
 			$NextLogIndex++
-
+		  
 			Write-Host "Iteration $i of $MaxIterations"
 			Write-Host "Transcript: $logFile"
 			Write-Host "Started: $(Get-Date -Format o)"
-
+			Write-Host ''
+		  
 			try {
 				Start-Transcript -Path $logFile -Force | Out-Null
-
-				# Check if onboarding is already complete
-				$OnboardingComplete = $false
-				if (Test-Path $FeatureListCheckPath -PathType Leaf) {
-					# Check if feature_list.json contains actual data (not just template)
-					$content = Get-Content $FeatureListCheckPath -Raw
-					if ($content -notmatch '\{yyyy-mm-dd\}' -and $content -notmatch '\{Short name of the feature\}') {
-						$OnboardingComplete = $true
-					}
-				}
-
+		  
 				$opencodeExitCode = 0
-				if (-not (Test-Path $SpecCheckPath -PathType Leaf) -or -not (Test-Path $FeatureListCheckPath -PathType Leaf) -or -not $OnboardingComplete) {
-					if ((-not $script:NewProjectCreated) -and (Test-ExistingCodebase -Directory $ProjectDir) -and ((-not (Test-Path "$MetadataDir/spec.txt" -PathType Leaf)) -or (-not (Test-Path "$MetadataDir/feature_list.json" -PathType Leaf)) -or -not $OnboardingComplete)) {
-						if (-not $OnboardingComplete) {
-							Write-Host 'Detected incomplete onboarding, resuming onboarding prompt...'
-						} else {
-							Write-Host 'Detected existing codebase, using onboarding prompt...'
-						}
-						Copy-Artifacts -ProjectDir $ProjectDir
-						$opencodeExitCode = Invoke-OpenCodePrompt -ProjectDir $ProjectDir -PromptPath "$PSScriptRoot/prompts/onboarding.md" -EffectiveModel $effectiveInitModel
-					} else {
-						Write-Host 'Required files not found, copying spec and sending initializer prompt...'
-						Copy-Artifacts -ProjectDir $ProjectDir
-						if ($Spec -ne '') {
-							Copy-Item $Spec $SpecCheckPath
-						}
-						$opencodeExitCode = Invoke-OpenCodePrompt -ProjectDir $ProjectDir -PromptPath "$PSScriptRoot/prompts/initializer.md" -EffectiveModel $effectiveInitModel
-					}
-				} else {
-					Write-Host 'Required files found, sending coding prompt...'
+				# Determine which prompt to send based on project state
+				if ($OnboardingComplete -and (Test-Path $FeatureListCheckPath -PathType Leaf)) {
+					# Onboarding is complete, ready for coding
+					Write-Host 'Onboarding complete, sending coding prompt...'
 					$opencodeExitCode = Invoke-OpenCodePrompt -ProjectDir $ProjectDir -PromptPath "$PSScriptRoot/prompts/coding.md" -EffectiveModel $effectiveCodeModel
+				} elseif ($script:NewProjectCreated -and $Spec -ne '') {
+					# New project with spec file - use initializer
+					Write-Host 'New project detected, copying spec and sending initializer prompt...'
+					Copy-Artifacts -ProjectDir $ProjectDir
+					if ($Spec -ne '') {
+						Copy-Item $Spec $SpecCheckPath
+					}
+					$opencodeExitCode = Invoke-OpenCodePrompt -ProjectDir $ProjectDir -PromptPath "$PSScriptRoot/prompts/initializer.md" -EffectiveModel $effectiveInitModel
+				} elseif (Test-ExistingCodebase -Directory $ProjectDir) {
+					# Existing codebase that needs onboarding
+					if (-not $OnboardingComplete) {
+						Write-Host 'Detected incomplete onboarding, resuming onboarding prompt...'
+					} else {
+						Write-Host 'Detected existing codebase without feature_list, using onboarding prompt...'
+					}
+					Copy-Artifacts -ProjectDir $ProjectDir
+					$opencodeExitCode = Invoke-OpenCodePrompt -ProjectDir $ProjectDir -PromptPath "$PSScriptRoot/prompts/onboarding.md" -EffectiveModel $effectiveInitModel
+				} else {
+					# New project without spec file - use initializer
+					Write-Host 'No spec provided, sending initializer prompt...'
+					Copy-Artifacts -ProjectDir $ProjectDir
+					$opencodeExitCode = Invoke-OpenCodePrompt -ProjectDir $ProjectDir -PromptPath "$PSScriptRoot/prompts/initializer.md" -EffectiveModel $effectiveInitModel
 				}
 
 				if ($opencodeExitCode -ne 0) {

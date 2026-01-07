@@ -8,7 +8,7 @@ SPEC_FILE=""
 MAX_ITERATIONS=""  # Empty means unlimited
 PROJECT_DIR=""
 TIMEOUT="600"  # Default to 600 seconds
-IDLE_TIMEOUT="180"  # Default idle output timeout in seconds
+IDLE_TIMEOUT="300"  # Default idle output timeout in seconds (increased from 180 to allow for longer AI responses)
 NO_CLEAN=false  # Whether to skip log cleaning
 QUIT_ON_ABORT="0"  # 0=continue on abort, N=quit after N consecutive failures
 
@@ -65,7 +65,7 @@ while [[ $# -gt 0 ]]; do
             echo "  --spec             Specification file (optional for existing codebases, required for new projects)"
             echo "  --max-iterations   Maximum iterations (optional, unlimited if not specified)"
             echo "  --timeout          Timeout in seconds (optional, default: 600)"
-            echo "  --idle-timeout     Abort if opencode produces no output for N seconds (optional, default: 180)"
+            echo "  --idle-timeout     Abort if opencode produces no output for N seconds (optional, default: 300)"
             echo "  --model            Model to use (optional)"
             echo "  --init-model       Model to use for initializer/onboarding prompts (optional, overrides --model)"
             echo "  --code-model       Model to use for coding prompt (optional, overrides --model)"
@@ -113,6 +113,12 @@ fi
 
 NO_ASSISTANT_PATTERN="The model returned no assistant messages"
 PROVIDER_ERROR_PATTERN="Provider returned error"
+
+# Exit codes
+EXIT_SUCCESS=0
+EXIT_NO_ASSISTANT=70
+EXIT_IDLE_TIMEOUT=71
+EXIT_PROVIDER_ERROR=72
 
 run_opencode_prompt() {
     local project_dir="$1"
@@ -199,7 +205,11 @@ find_or_create_metadata_dir() {
         return
     fi
     if [[ -d "$dir/.automaker" ]]; then
-        echo "$dir/.automaker"
+        local legacy="$dir/.automaker"
+        local target="$dir/.aidd"
+        mkdir -p "$target"
+        cp -R "$legacy/." "$target/" 2>/dev/null || true
+        echo "$target"
         return
     fi
 
@@ -321,6 +331,15 @@ copy_artifacts() {
 
 NEXT_LOG_INDEX="$(get_next_log_index)"
 
+# Initialize onboarding state check (persist across iterations)
+ONBOARDING_COMPLETE=false
+if [[ -f "$FEATURE_LIST_CHECK_PATH" ]]; then
+    # Check if feature_list.json contains actual data (not just template)
+    if ! grep -q "{yyyy-mm-dd}" "$FEATURE_LIST_CHECK_PATH" && ! grep -q "{Short name of the feature}" "$FEATURE_LIST_CHECK_PATH"; then
+        ONBOARDING_COMPLETE=true
+    fi
+fi
+
 # Initialize failure counter
 CONSECUTIVE_FAILURES=0
 
@@ -339,6 +358,32 @@ cleanup_logs() {
     fi
 }
 
+# Function to handle script exit with proper exit codes
+handle_script_exit() {
+    local exit_code=$?
+    
+    case $exit_code in
+        0) return ;;  # Success, no message needed
+        70) return ;;  # No assistant messages
+        71) return ;;  # Idle timeout
+        72) return ;;  # Provider error
+        124) 
+            echo "aidd-o.sh: ERROR: opencode process was terminated by signal (exit=124)"
+            return 1  # Treat as error, not abort
+            ;;
+        130) 
+            echo "aidd-o.sh: ERROR: Invalid configuration or system failure (exit=130)"
+            return 1  # Treat as error, not abort
+            ;;
+        *) 
+            echo "aidd-o.sh: ERROR: Unknown exit code from opencode (exit=$exit_code)"
+            return 1  # Treat unknown as error, not abort
+            ;;
+    esac
+}
+
+# Set trap to handle script exit with proper exit codes
+trap handle_script_exit EXIT
 # Set trap to clean logs on script exit (both normal and interrupted)
 trap cleanup_logs EXIT
 
@@ -355,43 +400,34 @@ if [[ -z "$MAX_ITERATIONS" ]]; then
             echo "Transcript: $LOG_FILE"
             echo "Started: $(date -Is 2>/dev/null || date)"
             echo
-
-            # Check if onboarding is already complete
-            ONBOARDING_COMPLETE=false
-            if [[ -f "$FEATURE_LIST_CHECK_PATH" ]]; then
-                # Check if feature_list.json contains actual data (not just template)
-                if ! grep -q "{yyyy-mm-dd}" "$FEATURE_LIST_CHECK_PATH" && ! grep -q "{Short name of the feature}" "$FEATURE_LIST_CHECK_PATH"; then
-                    ONBOARDING_COMPLETE=true
-                fi
-            fi
-
-            if [[ ! -f "$SPEC_CHECK_PATH" || ! -f "$FEATURE_LIST_CHECK_PATH" || "$ONBOARDING_COMPLETE" == false ]]; then
-                # Check if this is an existing codebase BEFORE copying spec
-                if [[ "$NEW_PROJECT_CREATED" == false ]] && is_existing_codebase "$PROJECT_DIR" && [[ ! -f "$METADATA_DIR/spec.txt" || ! -f "$METADATA_DIR/feature_list.json" || "$ONBOARDING_COMPLETE" == false ]]; then
-                    if [[ "$ONBOARDING_COMPLETE" == false ]]; then
-                        echo "Detected incomplete onboarding, resuming onboarding prompt..."
-                    else
-                        echo "Detected existing codebase, using onboarding prompt..."
-                    fi
-                    # Ensure .aidd exists (migrating legacy state if necessary) and copy artifacts
-                    copy_artifacts "$PROJECT_DIR"
-                    # Send onboarding prompt from project directory (don't copy spec)
-                    run_opencode_prompt "$PROJECT_DIR" "$SCRIPT_DIR/prompts/onboarding.md" "${INIT_MODEL_ARGS[@]}"
-                else
-                    echo "Required files not found, copying spec and sending initializer prompt..."
-                    # Ensure .aidd exists (migrating legacy state if necessary) and copy artifacts
-                    copy_artifacts "$PROJECT_DIR"
-                    # Copy spec file to project directory (only if we have one)
-                    if [[ -n "$SPEC_FILE" ]]; then
-                        cp "$SPEC_FILE" "$SPEC_CHECK_PATH"
-                    fi
-                    # Send initializer prompt from project directory
-                    run_opencode_prompt "$PROJECT_DIR" "$SCRIPT_DIR/prompts/initializer.md" "${INIT_MODEL_ARGS[@]}"
-                fi
-            else
-                echo "Required files found, sending coding prompt..."
-                # Send coding prompt from project directory
+ 
+            # Determine which prompt to send based on project state
+            if [[ "$ONBOARDING_COMPLETE" == true ]] && [[ -f "$FEATURE_LIST_CHECK_PATH" ]]; then
+                # Onboarding is complete, ready for coding
+                echo "Onboarding complete, sending coding prompt..."
                 run_opencode_prompt "$PROJECT_DIR" "$SCRIPT_DIR/prompts/coding.md" "${CODE_MODEL_ARGS[@]}"
+            elif [[ "$NEW_PROJECT_CREATED" == true ]] && [[ -n "$SPEC_FILE" ]]; then
+                # New project with spec file - use initializer
+                echo "New project detected, copying spec and sending initializer prompt..."
+                copy_artifacts "$PROJECT_DIR"
+                if [[ -n "$SPEC_FILE" ]]; then
+                    cp "$SPEC_FILE" "$SPEC_CHECK_PATH"
+                fi
+                run_opencode_prompt "$PROJECT_DIR" "$SCRIPT_DIR/prompts/initializer.md" "${INIT_MODEL_ARGS[@]}"
+            elif is_existing_codebase "$PROJECT_DIR" ]]; then
+                # Existing codebase that needs onboarding
+                if [[ "$ONBOARDING_COMPLETE" == false ]]; then
+                    echo "Detected incomplete onboarding, resuming onboarding prompt..."
+                else
+                    echo "Detected existing codebase without feature_list, using onboarding prompt..."
+                fi
+                copy_artifacts "$PROJECT_DIR"
+                run_opencode_prompt "$PROJECT_DIR" "$SCRIPT_DIR/prompts/onboarding.md" "${INIT_MODEL_ARGS[@]}"
+            else
+                # New project without spec file - use initializer
+                echo "No spec provided, sending initializer prompt..."
+                copy_artifacts "$PROJECT_DIR"
+                run_opencode_prompt "$PROJECT_DIR" "$SCRIPT_DIR/prompts/initializer.md" "${INIT_MODEL_ARGS[@]}"
             fi
 
             OPENCODE_EXIT_CODE=$?
@@ -436,43 +472,34 @@ else
             echo "Transcript: $LOG_FILE"
             echo "Started: $(date -Is 2>/dev/null || date)"
             echo
-
-            # Check if onboarding is already complete
-            ONBOARDING_COMPLETE=false
-            if [[ -f "$FEATURE_LIST_CHECK_PATH" ]]; then
-                # Check if feature_list.json contains actual data (not just template)
-                if ! grep -q "{yyyy-mm-dd}" "$FEATURE_LIST_CHECK_PATH" && ! grep -q "{Short name of the feature}" "$FEATURE_LIST_CHECK_PATH"; then
-                    ONBOARDING_COMPLETE=true
-                fi
-            fi
-
-            if [[ ! -f "$SPEC_CHECK_PATH" || ! -f "$FEATURE_LIST_CHECK_PATH" || "$ONBOARDING_COMPLETE" == false ]]; then
-                # Check if this is an existing codebase BEFORE copying spec
-                if [[ "$NEW_PROJECT_CREATED" == false ]] && is_existing_codebase "$PROJECT_DIR" && [[ ! -f "$METADATA_DIR/spec.txt" || ! -f "$METADATA_DIR/feature_list.json" || "$ONBOARDING_COMPLETE" == false ]]; then
-                    if [[ "$ONBOARDING_COMPLETE" == false ]]; then
-                        echo "Detected incomplete onboarding, resuming onboarding prompt..."
-                    else
-                        echo "Detected existing codebase, using onboarding prompt..."
-                    fi
-                    # Create .autoo directory if it doesn't exist and copy artifacts
-                    copy_artifacts "$PROJECT_DIR"
-                    # Send onboarding prompt from project directory (don't copy spec)
-                    run_opencode_prompt "$PROJECT_DIR" "$SCRIPT_DIR/prompts/onboarding.md" "${INIT_MODEL_ARGS[@]}"
-                else
-                    echo "Required files not found, copying spec and sending initializer prompt..."
-                    # Create .autoo directory if it doesn't exist and copy artifacts
-                    copy_artifacts "$PROJECT_DIR"
-                    # Copy spec file to project directory (only if we have one)
-                    if [[ -n "$SPEC_FILE" ]]; then
-                        cp "$SPEC_FILE" "$SPEC_CHECK_PATH"
-                    fi
-                    # Send initializer prompt from project directory
-                    run_opencode_prompt "$PROJECT_DIR" "$SCRIPT_DIR/prompts/initializer.md" "${INIT_MODEL_ARGS[@]}"
-                fi
-            else
-                echo "Required files found, sending coding prompt..."
-                # Send coding prompt from project directory
+ 
+            # Determine which prompt to send based on project state
+            if [[ "$ONBOARDING_COMPLETE" == true ]] && [[ -f "$FEATURE_LIST_CHECK_PATH" ]]; then
+                # Onboarding is complete, ready for coding
+                echo "Onboarding complete, sending coding prompt..."
                 run_opencode_prompt "$PROJECT_DIR" "$SCRIPT_DIR/prompts/coding.md" "${CODE_MODEL_ARGS[@]}"
+            elif [[ "$NEW_PROJECT_CREATED" == true ]] && [[ -n "$SPEC_FILE" ]]; then
+                # New project with spec file - use initializer
+                echo "New project detected, copying spec and sending initializer prompt..."
+                copy_artifacts "$PROJECT_DIR"
+                if [[ -n "$SPEC_FILE" ]]; then
+                    cp "$SPEC_FILE" "$SPEC_CHECK_PATH"
+                fi
+                run_opencode_prompt "$PROJECT_DIR" "$SCRIPT_DIR/prompts/initializer.md" "${INIT_MODEL_ARGS[@]}"
+            elif is_existing_codebase "$PROJECT_DIR" ]]; then
+                # Existing codebase that needs onboarding
+                if [[ "$ONBOARDING_COMPLETE" == false ]]; then
+                    echo "Detected incomplete onboarding, resuming onboarding prompt..."
+                else
+                    echo "Detected existing codebase without feature_list, using onboarding prompt..."
+                fi
+                copy_artifacts "$PROJECT_DIR"
+                run_opencode_prompt "$PROJECT_DIR" "$SCRIPT_DIR/prompts/onboarding.md" "${INIT_MODEL_ARGS[@]}"
+            else
+                # New project without spec file - use initializer
+                echo "No spec provided, sending initializer prompt..."
+                copy_artifacts "$PROJECT_DIR"
+                run_opencode_prompt "$PROJECT_DIR" "$SCRIPT_DIR/prompts/initializer.md" "${INIT_MODEL_ARGS[@]}"
             fi
 
             OPENCODE_EXIT_CODE=$?

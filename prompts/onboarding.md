@@ -8,11 +8,32 @@ You are in Code mode and ready to begin integrating with an existing codebase to
 2. Do not write application business logic. Only create the setup/tracking/scaffolding files described below.
 3. Do not run any blocking processes else you will get stuck.
 
-### STEP 0: TOOLS
+### STEP 0:: INGEST ASSISTANT RULES
 
-You **must** use the Filesystem MCP server for all filesystem (read/write/edit) operations.
+**CRITICAL: Before proceeding, check for and ingest assistant rule files.**
 
-Tool names are exact and case-sensitive; treat `/.aidd/tools.md` as canonical before using any tool names.
+1. **Check for Assistant Rule Files:**
+    - Look for and read the following files in order of priority:
+      - `.windsurf/rules/best-practices.md`
+      - `.windsurf/rules/style.md`
+      - `.windsurf/rules/user.md`
+      - `AGENTS.md`
+      - `CLAUDE.md`
+    - These files contain important project rules, guidelines, and conventions
+    - If any of these files exist, read them immediately before continuing
+
+2. **Apply Assistant Rules:**
+    - Instructions in assistant rule files take precedence over generic steps in this prompt
+    - Document any rules found in your initial assessment
+    - If assistant rule files conflict with this prompt, follow assistant rule files
+    - These rules may include:
+        - Coding style and formatting conventions
+        - Architectural patterns and best practices
+        - Project-specific constraints or requirements
+        - Development workflow guidelines
+
+**Example:**
+If `.windsurf/rules/best-practices.md` contains specific architectural guidelines or CLAUDE.md has coding standards, follow those instead of generic instructions in this prompt.
 
 ### STEP 1: PROJECT-SPECIFIC INSTRUCTIONS
 
