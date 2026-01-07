@@ -31,7 +31,6 @@ param(
 	[Parameter(Mandatory = $false)]
 	[switch]$NoClean
 
-	,
 	[Parameter(Mandatory = $false)]
 	[int]$QuitOnAbort = 0
 )
@@ -76,9 +75,9 @@ function Find-OrCreateMetadataDir {
 		return $aiddDir
 	}
 
-	$autokDir = Join-Path $Directory '.autok'
-	if (Test-Path $autokDir -PathType Container) {
-		return $autokDir
+	$aiddDir = Join-Path $Directory '.aidd'
+	if (Test-Path $aiddDir -PathType Container) {
+		return $aiddDir
 	}
 
 	$automakerDir = Join-Path $Directory '.automaker'
@@ -143,32 +142,131 @@ function Invoke-OpenCodePrompt {
 	$opencodeArgs = @('run')
 	if ($EffectiveModel -ne '') { $opencodeArgs += @('--model', $EffectiveModel) }
 
-	# Start the process with timeout using PowerShell's job system
-	$job = Start-Job -ScriptBlock {
-		param($ProjectDir, $PromptPath, $Timeout, $opencodeArgs)
-		Set-Location $ProjectDir
-		$promptText = Get-Content -Path $PromptPath -Raw
-		$promptText | & opencode $opencodeArgs
-	} -ArgumentList $ProjectDir, $PromptPath, $Timeout, $opencodeArgs
+	$promptText = Get-Content -Path $PromptPath -Raw
 
-	# Wait for job to complete with timeout
-	$completed = Wait-Job -Job $job -Timeout $Timeout
+	$noAssistantPattern = 'The model returned no assistant messages'
+	$providerErrorPattern = 'Provider returned error'
 
-	if (-not $completed) {
-		Write-Error "aidd-o.ps1: timeout (${Timeout}s) waiting for opencode to complete; aborting."
-		Remove-Job -Job $job -Force
-		return 73
+	$sawNoAssistant = $false
+	$sawIdleTimeout = $false
+	$sawProviderError = $false
+
+	# Start opencode process
+	$processInfo = New-Object System.Diagnostics.ProcessStartInfo
+	$processInfo.FileName = 'opencode'
+	$processInfo.Arguments = $opencodeArgs -join ' '
+	$processInfo.WorkingDirectory = $ProjectDir
+	$processInfo.UseShellExecute = $false
+	$processInfo.RedirectStandardInput = $true
+	$processInfo.RedirectStandardOutput = $true
+	$processInfo.RedirectStandardError = $true
+	$processInfo.CreateNoWindow = $true
+
+	$process = New-Object System.Diagnostics.Process
+	$process.StartInfo = $processInfo
+	$process.Start() | Out-Null
+
+	# Write prompt to stdin
+	$process.StandardInput.Write($promptText)
+	$process.StandardInput.Close()
+
+	# Create async readers for stdout and stderr
+	$stdoutBuilder = New-Object System.Text.StringBuilder
+	$stderrBuilder = New-Object System.Text.StringBuilder
+
+	$stdoutReadComplete = $false
+	$stderrReadComplete = $false
+
+	$outputLines = @()
+
+	$stdoutTask = {
+		param($process, $stdoutBuilder, $outputLines, $noAssistantPattern, $providerErrorPattern)
+		while (-not $process.StandardOutput.EndOfStream) {
+			$line = $process.StandardOutput.ReadLine()
+			if ($null -ne $line) {
+				[void]$stdoutBuilder.AppendLine($line)
+				$outputLines += $line
+				Write-Output $line
+
+				if ($line -like "*$noAssistantPattern*") {
+					return 70
+				}
+				if ($line -like "*$providerErrorPattern*") {
+					return 72
+				}
+			}
+		}
+		return $null
 	}
 
-	# Get job results
-	$output = Receive-Job -Job $job
-	$output | ForEach-Object { Write-Output $_ }
-	$exitCode = 0 # Default success
-	if ($job.State -ne 'Completed') {
-		$exitCode = 1
+	$stderrTask = {
+		param($process, $stderrBuilder)
+		while (-not $process.StandardError.EndOfStream) {
+			$line = $process.StandardError.ReadLine()
+			if ($null -ne $line) {
+				[void]$stderrBuilder.AppendLine($line)
+				Write-Error $line
+			}
+		}
 	}
 
-	Remove-Job -Job $job
+	$stdoutHandle = $stdoutTask.BeginInvoke($process, $stdoutBuilder, $outputLines, $noAssistantPattern, $providerErrorPattern, $null, $null)
+	$stderrHandle = $stderrTask.BeginInvoke($process, $stderrBuilder, $null, $null)
+
+	$lastOutputTime = Get-Date
+
+	while (-not $process.HasExited) {
+		Start-Sleep -Milliseconds 100
+
+		if ($outputLines.Count -gt 0) {
+			$lastOutputTime = Get-Date
+		} else {
+			$elapsed = (Get-Date) - $lastOutputTime
+			if ($elapsed.TotalSeconds -ge $IdleTimeout) {
+				Write-Error "aidd-o.ps1: idle timeout (${IdleTimeout}s) waiting for opencode output; aborting."
+				$sawIdleTimeout = $true
+				$process.Kill()
+				break
+			}
+		}
+
+		if ($stdoutHandle.IsCompleted) {
+			$result = $stdoutTask.EndInvoke($stdoutHandle)
+			if ($result -eq 70) {
+				Write-Error "aidd-o.ps1: detected 'no assistant messages' from model; aborting."
+				$sawNoAssistant = $true
+				$process.Kill()
+				break
+			}
+			if ($result -eq 72) {
+				Write-Error "aidd-o.ps1: detected 'provider error' from model; aborting."
+				$sawProviderError = $true
+				$process.Kill()
+				break
+			}
+			$stdoutReadComplete = $true
+		}
+
+		if ($stderrHandle.IsCompleted) {
+			$stderrTask.EndInvoke($stderrHandle)
+			$stderrReadComplete = $true
+		}
+	}
+
+	$process.WaitForExit()
+	$exitCode = $process.ExitCode
+
+	if ($sawNoAssistant) {
+		return 70
+	}
+
+	if ($sawIdleTimeout) {
+		return 71
+	}
+
+	if ($sawProviderError) {
+		return 72
+	}
 
 	return $exitCode
 }
