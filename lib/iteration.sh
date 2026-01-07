@@ -135,14 +135,14 @@ check_onboarding_status() {
     if [[ -f "$feature_list_path" ]]; then
         # Check if feature_list.json contains actual data (not just template)
         if ! grep -q "{yyyy-mm-dd}" "$feature_list_path" && ! grep -q "{Short name of the feature}" "$feature_list_path"; then
-            ONBOARDING_COMPLETE=true
+            export ONBOARDING_COMPLETE=true
             log_debug "Onboarding is complete"
         else
-            ONBOARDING_COMPLETE=false
+            export ONBOARDING_COMPLETE=false
             log_debug "Onboarding incomplete (template still present)"
         fi
     else
-        ONBOARDING_COMPLETE=false
+        export ONBOARDING_COMPLETE=false
         log_debug "No feature_list.json found, onboarding incomplete"
     fi
 }
