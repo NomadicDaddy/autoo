@@ -3,7 +3,7 @@
 
 # Iteration state variables
 export CURRENT_ITERATION=0
-export TOTAL_ITERATIONS="${MAX_ITERATIONS:-10}"
+export TOTAL_ITERATIONS="${MAX_ITERATIONS:-$DEFAULT_MAX_ITERATIONS}"
 export ITERATION_STATUS="idle"
 export ITERATION_START_TIME=""
 export ITERATION_END_TIME=""
@@ -32,7 +32,7 @@ readonly STATE_ABORTED="aborted"
 # Initialize iteration tracking
 init_iterations() {
     CURRENT_ITERATION=0
-    TOTAL_ITERATIONS="${MAX_ITERATIONS:-10}"
+    TOTAL_ITERATIONS="${MAX_ITERATIONS:-$DEFAULT_MAX_ITERATIONS}"
     ITERATION_STATUS="$STATE_IDLE"
     CONSECUTIVE_FAILURES=0
 
@@ -105,8 +105,21 @@ handle_failure() {
 
     # Check if exit code is signal termination (124 = SIGINT or timeout kill)
     if [[ $exit_code -eq 124 ]]; then
-        log_warn "Opencode terminated by signal (exit=124); aborting script"
-        exit "$exit_code"
+        if [[ $CONTINUE_ON_TIMEOUT == true ]]; then
+            log_warn "Opencode terminated by signal (exit=124); continuing to next iteration (--continue-on-timeout set)"
+            # Increment failure counter to track repeated timeouts
+            ((CONSECUTIVE_FAILURES++))
+            log_error "Timeout #$CONSECUTIVE_FAILURES (exit=$exit_code)"
+            # Check if we should quit due to repeated timeouts
+            if [[ $QUIT_ON_ABORT -gt 0 && $CONSECUTIVE_FAILURES -ge $QUIT_ON_ABORT ]]; then
+                log_error "Reached failure threshold ($QUIT_ON_ABORT) due to repeated timeouts; quitting"
+                exit "$exit_code"
+            fi
+            return
+        else
+            log_warn "Opencode terminated by signal (exit=124); aborting script"
+            exit "$exit_code"
+        fi
     fi
 
     # Increment failure counter
@@ -130,7 +143,7 @@ reset_failure_counter() {
 # Check if project is new and needs onboarding
 check_onboarding_status() {
     local metadata_dir="$1"
-    local feature_list_path="$metadata_dir/feature_list.json"
+    local feature_list_path="$metadata_dir/$DEFAULT_FEATURE_LIST_FILE"
 
     if [[ -f "$feature_list_path" ]]; then
         # Check if feature_list.json contains actual data (not just template)
@@ -143,7 +156,7 @@ check_onboarding_status() {
         fi
     else
         export ONBOARDING_COMPLETE=false
-        log_debug "No feature_list.json found, onboarding incomplete"
+        log_debug "No $DEFAULT_FEATURE_LIST_FILE found, onboarding incomplete"
     fi
 }
 
@@ -256,7 +269,7 @@ run_iteration_cycle() {
 
 # Save iteration state
 save_iteration_state() {
-    local state_file="$PROJECT_DIR/.iteration_state"
+    local state_file="$PROJECT_DIR/$DEFAULT_STATE_FILE"
 
     cat > "$state_file" << EOF
 CURRENT_ITERATION=$CURRENT_ITERATION
@@ -273,7 +286,7 @@ EOF
 
 # Load iteration state
 load_iteration_state() {
-    local state_file="$PROJECT_DIR/.iteration_state"
+    local state_file="$PROJECT_DIR/$DEFAULT_STATE_FILE"
 
     if [[ -f "$state_file" ]]; then
         source "$state_file"
@@ -287,13 +300,13 @@ load_iteration_state() {
 # Reset iteration state
 reset_iteration_state() {
     CURRENT_ITERATION=0
-    TOTAL_ITERATIONS="${MAX_ITERATIONS:-10}"
+    TOTAL_ITERATIONS="${MAX_ITERATIONS:-$DEFAULT_MAX_ITERATIONS}"
     ITERATION_STATUS="$STATE_IDLE"
     ITERATION_START_TIME=""
     ITERATION_END_TIME=""
 
     # Remove state file if exists
-    rm -f "$PROJECT_DIR/.iteration_state"
+    rm -f "$PROJECT_DIR/$DEFAULT_STATE_FILE"
 
     log_info "Iteration state reset"
 }
@@ -331,20 +344,20 @@ determine_prompt() {
     local project_dir="$1"
     local script_dir="$2"
     local metadata_dir="$3"
-    local spec_check_path="$metadata_dir/spec.txt"
-    local feature_list_check_path="$metadata_dir/feature_list.json"
-    local todo_check_path="$metadata_dir/todo.md"
-    
+    local spec_check_path="$metadata_dir/$DEFAULT_SPEC_FILE"
+    local feature_list_check_path="$metadata_dir/$DEFAULT_FEATURE_LIST_FILE"
+    local todo_check_path="$metadata_dir/$DEFAULT_TODO_FILE"
+
     # Check for TODO mode first
     if [[ "$TODO_MODE" == true ]]; then
         # Check if todo.md exists
         if [[ -f "$todo_check_path" ]]; then
-            log_info "Using todo.md to complete existing work items"
-            PROMPT_PATH="$script_dir/prompts/todo.md"
+            log_info "Using $DEFAULT_TODO_FILE to complete existing work items"
+            PROMPT_PATH="$script_dir/$DEFAULT_PROMPTS_DIR/$DEFAULT_TODO_FILE"
             PROMPT_TYPE="todo"
             return 0
         else
-            log_error "No todo.md found in project directory"
+            log_error "No $DEFAULT_TODO_FILE found in project directory"
             return 1
         fi
     fi
@@ -352,13 +365,13 @@ determine_prompt() {
     if [[ "$ONBOARDING_COMPLETE" == true ]] && [[ -f "$feature_list_check_path" ]]; then
         # Onboarding is complete, ready for coding
         log_info "Onboarding complete, using coding prompt"
-        PROMPT_PATH="$script_dir/prompts/coding.md"
+        PROMPT_PATH="$script_dir/$DEFAULT_PROMPTS_DIR/coding.md"
         PROMPT_TYPE="coding"
         return 0
     elif [[ "$NEW_PROJECT_CREATED" == true ]] && [[ -n "$SPEC_FILE" ]]; then
         # New project with spec file - use initializer
         log_info "New project detected, using initializer prompt"
-        PROMPT_PATH="$script_dir/prompts/initializer.md"
+        PROMPT_PATH="$script_dir/$DEFAULT_PROMPTS_DIR/initializer.md"
         PROMPT_TYPE="initializer"
         return 0
     elif is_existing_codebase "$project_dir"; then
@@ -366,15 +379,15 @@ determine_prompt() {
         if [[ "$ONBOARDING_COMPLETE" == false ]]; then
             log_info "Detected incomplete onboarding, using onboarding prompt"
         else
-            log_info "Detected existing codebase without feature_list, using onboarding prompt"
+            log_info "Detected existing codebase without $DEFAULT_FEATURE_LIST_FILE, using onboarding prompt"
         fi
-        PROMPT_PATH="$script_dir/prompts/onboarding.md"
+        PROMPT_PATH="$script_dir/$DEFAULT_PROMPTS_DIR/onboarding.md"
         PROMPT_TYPE="onboarding"
         return 0
     else
         # New project without spec file - use initializer
         log_info "No spec provided, using initializer prompt"
-        PROMPT_PATH="$script_dir/prompts/initializer.md"
+        PROMPT_PATH="$script_dir/$DEFAULT_PROMPTS_DIR/initializer.md"
         PROMPT_TYPE="initializer"
         return 0
     fi
@@ -385,19 +398,14 @@ is_existing_codebase() {
     local dir="$1"
     # Check if directory exists and has files (excluding .git and metadata directories)
     if [[ -d "$dir" ]]; then
-        # Find files/directories excluding .git, .aidd, .auto, .autok, .automaker, .autoo, and their contents
-        local has_files=$(find "$dir" -mindepth 1 -maxdepth 1 \
-            ! -name '.git' \
-            ! -name '.aidd' \
-            ! -name '.auto' \
-            ! -name '.autok' \
-            ! -name '.automaker' \
-            ! -name '.autoo' \
-            ! -name '.DS_Store' \
-            ! -name 'node_modules' \
-            ! -name '.vscode' \
-            ! -name '.idea' \
-            -print -quit 2>/dev/null | wc -l)
+        # Build exclude pattern for metadata directories
+        local exclude_pattern=""
+        for metadata_dir in .git $DEFAULT_METADATA_DIR $LEGACY_METADATA_DIRS .DS_Store node_modules .vscode .idea; do
+            exclude_pattern="$exclude_pattern ! -name '$metadata_dir' "
+        done
+
+        # Find files/directories excluding metadata directories
+        local has_files=$(find "$dir" -mindepth 1 -maxdepth 1 $exclude_pattern -print -quit 2>/dev/null | wc -l)
         if [[ $has_files -gt 0 ]]; then
             return 0  # True - it's an existing codebase
         fi
@@ -427,34 +435,27 @@ trap handle_abort ABRT
 find_or_create_metadata_dir() {
     local dir="$1"
 
-    if [[ -d "$dir/.aidd" ]]; then
-        echo "$dir/.aidd"
+    if [[ -d "$dir/$DEFAULT_METADATA_DIR" ]]; then
+        echo "$dir/$DEFAULT_METADATA_DIR"
         return
     fi
 
     # Migrate legacy metadata to .aidd as needed
-    if [[ -d "$dir/.autoo" ]]; then
-        local legacy="$dir/.autoo"
-        local target="$dir/.aidd"
-        mkdir -p "$target"
-        cp -R "$legacy/." "$target/" 2>/dev/null || true
-        log_debug "Migrated .autoo to .aidd"
-        echo "$target"
-        return
-    fi
-    if [[ -d "$dir/.automaker" ]]; then
-        local legacy="$dir/.automaker"
-        local target="$dir/.aidd"
-        mkdir -p "$target"
-        cp -R "$legacy/." "$target/" 2>/dev/null || true
-        log_debug "Migrated .automaker to .aidd"
-        echo "$target"
-        return
-    fi
+    for legacy_dir in $LEGACY_METADATA_DIRS; do
+        if [[ -d "$dir/$legacy_dir" ]]; then
+            local legacy="$dir/$legacy_dir"
+            local target="$dir/$DEFAULT_METADATA_DIR"
+            mkdir -p "$target"
+            cp -R "$legacy/." "$target/" 2>/dev/null || true
+            log_debug "Migrated $legacy_dir to $DEFAULT_METADATA_DIR"
+            echo "$target"
+            return
+        fi
+    done
 
-    mkdir -p "$dir/.aidd"
-    log_debug "Created .aidd metadata directory"
-    echo "$dir/.aidd"
+    mkdir -p "$dir/$DEFAULT_METADATA_DIR"
+    log_debug "Created $DEFAULT_METADATA_DIR metadata directory"
+    echo "$dir/$DEFAULT_METADATA_DIR"
 }
 
 # Get next log index

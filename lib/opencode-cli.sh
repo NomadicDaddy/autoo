@@ -34,13 +34,13 @@ run_opencode_prompt() {
 
     log_debug "Running opencode in: $project_dir"
     log_debug "Prompt: $prompt_path"
-    log_debug "Timeout: ${TIMEOUT:-600}s, Idle: ${IDLE_TIMEOUT:-300}s"
+    log_debug "Timeout: ${TIMEOUT:-$DEFAULT_TIMEOUT}s, Idle: ${IDLE_TIMEOUT:-$DEFAULT_IDLE_TIMEOUT}s"
 
-    coproc OPENCODE_PROC { (cd "$project_dir" && timeout "${TIMEOUT:-600}" bash -c "cat '$prompt_path' | $opencode_cmd") 2>&1; }
+    coproc OPENCODE_PROC { (cd "$project_dir" && timeout "${TIMEOUT:-$DEFAULT_TIMEOUT}" bash -c "cat '$prompt_path' | $opencode_cmd") 2>&1; }
 
     while true; do
         local line=""
-        if IFS= read -r -t "${IDLE_TIMEOUT:-300}" line <&"${OPENCODE_PROC[0]}"; then
+        if IFS= read -r -t "${IDLE_TIMEOUT:-$DEFAULT_IDLE_TIMEOUT}" line <&"${OPENCODE_PROC[0]}"; then
             echo "$line"
             if [[ "$line" == *"$NO_ASSISTANT_PATTERN"* ]]; then
                 saw_no_assistant=true
@@ -59,7 +59,7 @@ run_opencode_prompt() {
 
         if kill -0 "$OPENCODE_PROC_PID" 2>/dev/null; then
             saw_idle_timeout=true
-            log_warn "Idle timeout (${IDLE_TIMEOUT:-300}s) waiting for opencode output"
+            log_warn "Idle timeout (${IDLE_TIMEOUT:-$DEFAULT_IDLE_TIMEOUT}s) waiting for opencode output"
             kill -TERM "$OPENCODE_PROC_PID" 2>/dev/null || true
             break
         fi

@@ -21,10 +21,29 @@ readonly EXIT_OPENCODE_ERROR=8       # OpenCode/API error
 # Default Values
 # -----------------------------------------------------------------------------
 readonly DEFAULT_MODEL="opencode"            # Default LLM model
-readonly DEFAULT_TIMEOUT=120                 # Default timeout in seconds (2 minutes)
+readonly DEFAULT_MAX_ITERATIONS=10          # Default max iterations (0 = unlimited)
+readonly DEFAULT_TIMEOUT=600                 # Default timeout in seconds (10 minutes)
 readonly DEFAULT_IDLE_TIMEOUT=300            # Default idle timeout in seconds (5 minutes)
 readonly DEFAULT_NO_CLEAN=0                  # Default: clean up artifacts (0 = false)
 readonly DEFAULT_QUIT_ON_ABORT=0             # Default: continue on abort (0 = false)
+
+# -----------------------------------------------------------------------------
+# Directory and File Names
+# -----------------------------------------------------------------------------
+readonly DEFAULT_METADATA_DIR=".aidd"                 # Metadata directory name (hidden)
+readonly DEFAULT_PROMPTS_DIR="prompts"                # Prompts directory name
+readonly DEFAULT_ITERATIONS_DIR="iterations"           # Iterations directory name
+readonly DEFAULT_SCAFFOLDING_DIR="scaffolding"       # Scaffolding directory name
+readonly DEFAULT_ARTIFACTS_DIR="artifacts"           # Artifacts directory name
+readonly DEFAULT_STATE_FILE=".iteration_state"         # Iteration state file name
+readonly DEFAULT_FEATURE_LIST_FILE="feature_list.json" # Feature list file name
+readonly DEFAULT_SPEC_FILE="spec.txt"                 # Spec file name
+readonly DEFAULT_TODO_FILE="todo.md"                  # Todo file name
+readonly DEFAULT_PROJECT_STRUCTURE_FILE="project_structure.md" # Project structure file name
+readonly DEFAULT_PIPELINE_FILE="pipeline.json"        # Pipeline file name
+
+# Legacy metadata directory names (for migration)
+readonly LEGACY_METADATA_DIRS=".autoo .automaker .auto .autok"  # Old metadata directory names
 
 # -----------------------------------------------------------------------------
 # Pattern Constants for Error Detection

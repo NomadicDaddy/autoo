@@ -57,12 +57,12 @@ if [[ ! -d "$PROJECT_DIR" ]]; then
 
     # Copy scaffolding files to the new project directory (including hidden files)
     log_info "Copying scaffolding files to '$PROJECT_DIR'..."
-    find "$SCRIPT_DIR/scaffolding" -mindepth 1 -maxdepth 1 -exec cp -r {} "$PROJECT_DIR/" \;
+    find "$SCRIPT_DIR/$DEFAULT_SCAFFOLDING_DIR" -mindepth 1 -maxdepth 1 -exec cp -r {} "$PROJECT_DIR/" \;
 
     # Copy artifacts contents to project's metadata folder
     log_info "Copying artifacts to '$METADATA_DIR'..."
     mkdir -p "$METADATA_DIR"
-    find "$SCRIPT_DIR/artifacts" -mindepth 1 -maxdepth 1 -exec cp -r {} "$METADATA_DIR/" \;
+    find "$SCRIPT_DIR/$DEFAULT_ARTIFACTS_DIR" -mindepth 1 -maxdepth 1 -exec cp -r {} "$METADATA_DIR/" \;
 else
     # Check if this is an existing codebase
     if is_existing_codebase "$PROJECT_DIR"; then
@@ -77,15 +77,15 @@ if [[ -n "$SPEC_FILE" && ! -f "$SPEC_FILE" ]]; then
 fi
 
 # Define the paths to check
-SPEC_CHECK_PATH="$METADATA_DIR/spec.txt"
-FEATURE_LIST_CHECK_PATH="$METADATA_DIR/feature_list.json"
+SPEC_CHECK_PATH="$METADATA_DIR/$DEFAULT_SPEC_FILE"
+FEATURE_LIST_CHECK_PATH="$METADATA_DIR/$DEFAULT_FEATURE_LIST_FILE"
 
 # Create iterations directory for transcript logs
-ITERATIONS_DIR="$METADATA_DIR/iterations"
-mkdir -p "$ITERATIONS_DIR"
+ITERATIONS_DIR_FULL="$METADATA_DIR/$DEFAULT_ITERATIONS_DIR"
+mkdir -p "$ITERATIONS_DIR_FULL"
 
 # Initialize log index
-NEXT_LOG_INDEX="$(get_next_log_index "$ITERATIONS_DIR")"
+NEXT_LOG_INDEX="$(get_next_log_index "$ITERATIONS_DIR_FULL")"
 
 # Check onboarding status
 check_onboarding_status "$METADATA_DIR"
@@ -106,8 +106,8 @@ cleanup_logs() {
         return
     fi
     log_info "Cleaning iteration logs..."
-    if [[ -d "$ITERATIONS_DIR" ]] && [[ -n "$(ls -A "$ITERATIONS_DIR" 2>/dev/null)" ]]; then
-        node "$SCRIPT_DIR/clean-logs.js" "$ITERATIONS_DIR" --no-backup
+    if [[ -d "$ITERATIONS_DIR_FULL" ]] && [[ -n "$(ls -A "$ITERATIONS_DIR_FULL" 2>/dev/null)" ]]; then
+        node "$SCRIPT_DIR/clean-logs.js" "$ITERATIONS_DIR_FULL" --no-backup
         log_info "Log cleanup complete"
     fi
 }
@@ -122,7 +122,8 @@ handle_script_exit() {
         71) return ;;  # Idle timeout
         72) return ;;  # Provider error
         124)
-            log_error "Opencode process was terminated by signal (exit=124)"
+            # Don't log error here - handle_failure() already logged whether we're aborting or continuing
+            # This trap only runs on final script exit, not on per-iteration timeout
             return 1
             ;;
         130)
@@ -152,7 +153,7 @@ if [[ -z "$MAX_ITERATIONS" ]]; then
     log_info "Running unlimited iterations (use Ctrl+C to stop)"
     i=1
     while true; do
-        printf -v LOG_FILE "%s/%03d.log" "$ITERATIONS_DIR" "$NEXT_LOG_INDEX"
+        printf -v LOG_FILE "%s/%03d.log" "$ITERATIONS_DIR_FULL" "$NEXT_LOG_INDEX"
         NEXT_LOG_INDEX=$((NEXT_LOG_INDEX + 1))
 
         {
@@ -215,7 +216,7 @@ if [[ -z "$MAX_ITERATIONS" ]]; then
 else
     log_info "Running $MAX_ITERATIONS iterations"
     for ((i=1; i<=MAX_ITERATIONS; i++)); do
-        printf -v LOG_FILE "%s/%03d.log" "$ITERATIONS_DIR" "$NEXT_LOG_INDEX"
+        printf -v LOG_FILE "%s/%03d.log" "$ITERATIONS_DIR_FULL" "$NEXT_LOG_INDEX"
         NEXT_LOG_INDEX=$((NEXT_LOG_INDEX + 1))
 
         {

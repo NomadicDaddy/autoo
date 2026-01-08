@@ -232,7 +232,7 @@ execute_code() {
 {
     "code": $(printf '%s' "$code" | jq -Rs .),
     "language": "$language",
-    "timeout": ${TIMEOUT:-300}
+    "timeout": ${TIMEOUT:-$DEFAULT_TIMEOUT}
 }
 EOF
 )

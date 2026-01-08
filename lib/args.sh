@@ -27,8 +27,8 @@ OPTIONS:
     --project-dir DIR       Project directory (required unless --feature-list is specified)
     --spec FILE             Specification file (optional for existing codebases, required for new projects)
     --max-iterations N      Maximum iterations (optional, unlimited if not specified)
-    --timeout N             Timeout in seconds (optional, default: 600)
-    --idle-timeout N        Idle timeout in seconds (optional, default: 300)
+    --timeout N             Timeout in seconds (optional, default: 600s)
+    --idle-timeout N        Idle timeout in seconds (optional, default: 300s)
     --model MODEL           Model to use (optional)
     --init-model MODEL      Model for initializer/onboarding prompts (optional, overrides --model)
     --code-model MODEL      Model for coding prompts (optional, overrides --model)
@@ -135,12 +135,12 @@ validate_args() {
 apply_defaults() {
     # Default timeout
     if [[ -z "$TIMEOUT" ]]; then
-        TIMEOUT=600
+        TIMEOUT="$DEFAULT_TIMEOUT"
     fi
 
     # Default idle-timeout
     if [[ -z "$IDLE_TIMEOUT" ]]; then
-        IDLE_TIMEOUT=300
+        IDLE_TIMEOUT="$DEFAULT_IDLE_TIMEOUT"
     fi
 }
 
@@ -175,8 +175,8 @@ get_effective_models() {
 # Show feature list status
 show_feature_list() {
     local project_dir="$1"
-    local feature_list_file="$project_dir/.aidd/feature_list.json"
-    
+    local feature_list_file="$project_dir/$DEFAULT_METADATA_DIR/$DEFAULT_FEATURE_LIST_FILE"
+
     if [[ ! -f "$feature_list_file" ]]; then
         echo "Error: Feature list not found at: $feature_list_file" >&2
         echo "Run in an existing aidd-o project or specify --project-dir" >&2
