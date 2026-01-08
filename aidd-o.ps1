@@ -29,10 +29,13 @@ param(
 	[string]$CodeModel = '',
 
 	[Parameter(Mandatory = $false)]
-	[switch]$NoClean
+	[switch]$NoClean,
 
 	[Parameter(Mandatory = $false)]
-	[int]$QuitOnAbort = 0
+	[int]$QuitOnAbort = 0,
+
+	[Parameter(Mandatory = $false)]
+	[switch]$ContinueOnTimeout
 )
 
 # Show help if requested
@@ -50,6 +53,7 @@ if ($Help) {
 	Write-Host '  -CodeModel        Model to use for coding prompt (optional, overrides -Model)'
 	Write-Host '  -NoClean          Skip log cleaning on exit (optional)'
 	Write-Host '  -QuitOnAbort      Quit after N consecutive failures (optional, default: 0=continue indefinitely)'
+	Write-Host '  -ContinueOnTimeout Continue to next iteration if opencode times out (exit 124) instead of aborting (optional)'
 	Write-Host '  -Help             Show this help message'
 	Write-Host ''
 	exit 0
@@ -453,13 +457,18 @@ try {
 				}
 
 				if ($opencodeExitCode -ne 0) {
-					$ConsecutiveFailures++
-					Write-Error "aidd-o.ps1: opencode failed (exit=$opencodeExitCode); this is failure #$ConsecutiveFailures."
-					if ($QuitOnAbort -gt 0 -and $ConsecutiveFailures -ge $QuitOnAbort) {
-						Write-Error "aidd-o.ps1: reached failure threshold ($QuitOnAbort); quitting."
-						exit $opencodeExitCode
+					# Don't count timeout (exit 124) as a failure if ContinueOnTimeout is set
+					if ($opencodeExitCode -eq 124 -and $ContinueOnTimeout) {
+						Write-Warning "aidd-o.ps1: timeout detected on iteration $i, continuing to next iteration..."
+					} else {
+						$ConsecutiveFailures++
+						Write-Error "aidd-o.ps1: opencode failed (exit=$opencodeExitCode); this is failure #$ConsecutiveFailures."
+						if ($QuitOnAbort -gt 0 -and $ConsecutiveFailures -ge $QuitOnAbort) {
+							Write-Error "aidd-o.ps1: reached failure threshold ($QuitOnAbort); quitting."
+							exit $opencodeExitCode
+						}
+						Write-Error "aidd-o.ps1: continuing to next iteration (threshold: $QuitOnAbort)."
 					}
-					Write-Error "aidd-o.ps1: continuing to next iteration (threshold: $QuitOnAbort)."
 				} else {
 					$ConsecutiveFailures = 0
 				}
@@ -518,13 +527,18 @@ try {
 				}
 
 				if ($opencodeExitCode -ne 0) {
-					$ConsecutiveFailures++
-					Write-Error "aidd-o.ps1: opencode failed (exit=$opencodeExitCode); this is failure #$ConsecutiveFailures."
-					if ($QuitOnAbort -gt 0 -and $ConsecutiveFailures -ge $QuitOnAbort) {
-						Write-Error "aidd-o.ps1: reached failure threshold ($QuitOnAbort); quitting."
-						exit $opencodeExitCode
+					# Don't count timeout (exit 124) as a failure if ContinueOnTimeout is set
+					if ($opencodeExitCode -eq 124 -and $ContinueOnTimeout) {
+						Write-Warning "aidd-o.ps1: timeout detected on iteration $i, continuing to next iteration..."
+					} else {
+						$ConsecutiveFailures++
+						Write-Error "aidd-o.ps1: opencode failed (exit=$opencodeExitCode); this is failure #$ConsecutiveFailures."
+						if ($QuitOnAbort -gt 0 -and $ConsecutiveFailures -ge $QuitOnAbort) {
+							Write-Error "aidd-o.ps1: reached failure threshold ($QuitOnAbort); quitting."
+							exit $opencodeExitCode
+						}
+						Write-Error "aidd-o.ps1: continuing to next iteration (threshold: $QuitOnAbort)."
 					}
-					Write-Error "aidd-o.ps1: continuing to next iteration (threshold: $QuitOnAbort)."
 				} else {
 					$ConsecutiveFailures = 0
 				}

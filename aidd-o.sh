@@ -201,8 +201,13 @@ if [[ -z "$MAX_ITERATIONS" ]]; then
         } 2>&1 | tee "$LOG_FILE"
 
         ITERATION_EXIT_CODE=${PIPESTATUS[0]}
+        # Don't abort on timeout (exit 124) if continue-on-timeout is set
         if [[ $ITERATION_EXIT_CODE -ne 0 ]]; then
-            exit "$ITERATION_EXIT_CODE"
+            if [[ $ITERATION_EXIT_CODE -eq 124 && $CONTINUE_ON_TIMEOUT == true ]]; then
+                log_warn "Timeout detected on iteration $i, continuing to next iteration..."
+            else
+                exit "$ITERATION_EXIT_CODE"
+            fi
         fi
 
         ((i++))
@@ -265,8 +270,13 @@ else
         } 2>&1 | tee "$LOG_FILE"
 
         ITERATION_EXIT_CODE=${PIPESTATUS[0]}
+        # Don't abort on timeout (exit 124) if continue-on-timeout is set
         if [[ $ITERATION_EXIT_CODE -ne 0 ]]; then
-            exit "$ITERATION_EXIT_CODE"
+            if [[ $ITERATION_EXIT_CODE -eq 124 && $CONTINUE_ON_TIMEOUT == true ]]; then
+                log_warn "Timeout detected on iteration $i, continuing to next iteration..."
+            else
+                exit "$ITERATION_EXIT_CODE"
+            fi
         fi
     done
 fi

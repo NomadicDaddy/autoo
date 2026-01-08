@@ -100,7 +100,7 @@ If `.windsurf/rules/best-practices.md` contains specific architectural guideline
     - These code TODOs can be completed even if no explicit todo.md file exists
 
 3. **Determine Mode:**
-    - If `/.aidd/todo.md` exists and has incomplete items → Continue with TODO mode (skip to Step 3)
+    - If `/.aidd/todo.md` exists and has incomplete items → Continue with TODO mode (skip to Step 4)
     - If `/.aidd/todo.md` exists but is empty/complete → Search for common TODO names (above) and code TODO tags
     - If `/.aidd/todo.md` doesn't exist and no common names found → Search code for TODO tags
     - If neither todo.md nor code TODOs found → Transition to feature coding mode (Step 3 below)
@@ -117,16 +117,16 @@ If `.windsurf/rules/best-practices.md` contains specific architectural guideline
 2. **Transition Prompt:**
     - If transition is needed, inform the user: "All TODO items complete. Resuming feature development from feature_list.json"
     - Exit cleanly with exit code 0
-    - The main aidd-o.sh script will use the standard coding.md prompt in the next iteration
+    - The main script will use the standard coding.md prompt in the next iteration
 
 3. **Continue Normal Feature Development:**
     - If there are incomplete features in feature_list.json, they will be handled by the standard coding workflow
-    - No special handling needed - just complete TODO mode session
+    - No special handling needed - just complete the TODO mode session
     - Ensure no uncommitted changes before exiting
 
 ### STEP 4: GET YOUR BEARINGS
 
-**CRITICAL:** Only proceed with Steps 4-9 if TODO items exist. Otherwise, skip to Step 3 (Transition to Feature Coding).
+**CRITICAL:** Only proceed with Steps 4-11 if TODO items exist. Otherwise, skip to Step 3 (Transition to Feature Coding).
 
 Start by orienting yourself:
 
@@ -354,6 +354,6 @@ Test like a human user with mouse and keyboard. Don't take shortcuts that bypass
 - **IMMEDIATELY** retry with a different approach if `mcp_filesystem_edit_file` fails
 - **DOCUMENT** any file corruption incidents in `/.aidd/progress.md`
 
-You have unlimited time. Take as long as needed to get it right. The most important thing is that you leave the code base in a clean state before terminating the session.
+You have unlimited time. Take as long as needed to get it right. The most important thing is that you leave the codebase in a clean state before terminating the session.
 
 Begin by running Step 0 now.

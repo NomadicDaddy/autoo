@@ -17,6 +17,13 @@ You are in Code mode and ready to continue work on a long-running autonomous dev
 2. If there is a **blocking ambiguity** or missing requirements, **stop** and record the question in `/.aidd/progress.md`.
 3. Do not run any blocking processes else you will get stuck.
 
+**CRITICAL: Never start blocking dev servers inline**
+- Check if a dev server is already running before starting one (e.g., `lsof -ti:5173` or check if port responds)
+- If a dev server MUST be started, run it in the background with `&` and wait briefly for startup
+- NEVER run commands like `npm run dev`, `vite`, `next dev`, etc. directly - they block indefinitely
+- If you need to verify the dev server is accessible, use a curl check or browser automation instead
+- Blocking processes will timeout after 5 minutes and cause the AI driver to abort
+
 ### STEP 0: INGEST ASSISTANT RULES
 
 **CRITICAL: Before proceeding, check for and ingest assistant rule files.**

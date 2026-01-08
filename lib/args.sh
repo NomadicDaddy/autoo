@@ -12,6 +12,7 @@ export TIMEOUT=""
 export IDLE_TIMEOUT=""
 export NO_CLEAN=false
 export QUIT_ON_ABORT="0"
+export CONTINUE_ON_TIMEOUT=false
 export SHOW_FEATURE_LIST=false
 export TODO_MODE=false
 
@@ -33,6 +34,7 @@ OPTIONS:
     --code-model MODEL      Model for coding prompts (optional, overrides --model)
     --no-clean              Skip log cleaning on exit (optional)
     --quit-on-abort N       Quit after N consecutive failures (optional, default: 0=continue indefinitely)
+    --continue-on-timeout   Continue to next iteration if opencode times out (exit 124) instead of aborting (optional)
      --feature-list          Display project feature list status and exit (optional)
     --todo                  Use TODO mode: look for and complete todo items instead of new features (optional)
     --help                  Show this help message
@@ -91,6 +93,10 @@ parse_args() {
             --quit-on-abort)
                 QUIT_ON_ABORT="$2"
                 shift 2
+                ;;
+            --continue-on-timeout)
+                CONTINUE_ON_TIMEOUT=true
+                shift
                 ;;
             --feature-list)
                 SHOW_FEATURE_LIST=true
